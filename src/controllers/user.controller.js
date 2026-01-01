@@ -5,6 +5,7 @@ import { uploadOnCloudinary } from "../utils/couldinary.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { application } from "express";
 import jwt from "jsonwebtoken";
+import mongoose from "mongoose";
 
 const generateAccessAndRefreshToken = async (userId) => {
   try {
@@ -330,6 +331,135 @@ const updateUserCoverImage = asyncHandler(async (req, res) => {
     .status(200)
     .json(new ApiResponse(200, user, "cover image updated successfully"));
 });
+
+const getUserChannelProfile = asyncHandler(async (req, res) => {
+  const { username } = req.params;
+
+  // jese url me ata youtube/chaiourcode ab username dekho aise hi params me
+  if (!username?.trim()) {
+    throw new ApiError(400, "username is missing in params");
+  } // username nahi mila islie error dia
+
+  // ab ek channel bana looo
+  const channel = await User.aggregate([
+    {
+      $match: {
+        username: username?.toLowerCase(), // sirf wo username loo jokyy match kreee jese chaiourcode
+      },
+    },
+    {
+      $lookup: {
+        // is user ky kitny log is channel ko subscribe krty hein means subscribers kitnyyy
+        from: "subscriptions",
+        localField: "_id",
+        foreignField: "channel",
+        as: "subscribers",
+      },
+    },
+    {
+      $lookup: {
+        // ye user khudd kitny logo ko subscribe krta haii
+        from: "subscriptions",
+        localField: "_id",
+        foreignField: "subscriber",
+        as: "subscribedTo",
+      },
+    },
+    {
+      $addFields: {
+        subscribersCount: {
+          $size: "$subscribers", // ab btaoo kyy kiny subscribers heinn
+        },
+        channelSubscribedToCount: {
+          $size: "$subscribedTo", // ider btao kyy isne kitnoo ko subscribe kr rakha haii
+        },
+      },
+    },
+    {
+      $addFields: {
+        isSubscribed: {
+          $cond: {
+            if: { $in: [req.user?._id, "$subscribers.subscriber"] },
+            then: true,
+            else: false, // agar jo user haii woo subscribers me se hi ek subscriber hai too true bhej do wrna false
+          },
+        },
+      },
+    },
+    {
+      $project: {
+        fullName: 1,
+        username: 1,
+        subscribersCount: 1,
+        channelSubscribedToCount: 1,
+        isSubscribed: 1,
+        avatar: 1,
+        coverImage: 1,
+        email: 1,
+      },
+    },
+  ]);
+
+  if (!channel?.length) {
+    throw new ApiError(404, "channel does not exist");
+  }
+
+  return res
+    .status(200)
+    .json(
+      new ApiResponse(200, channel[0], "user channel fetched successfully")
+    );
+});
+
+const getWatchHistory = asyncHandler(async (req, res) => {
+  const user = await User.aggregate([
+    {
+      $match:{
+        _id: new mongoose.Types.ObjectId(req.user._id)
+      }
+    },
+    {
+      $lookup:{
+        from: "videos",
+        localField:"watchHistory",
+        foreignField:"_id",
+        as:"watchHistory",
+        pipeline:[
+          {
+            $lookup:{
+              from:"users",
+              localField:"owner",
+              foreignField:"_id",
+              as:"owner",
+              pipeline:[
+                {
+                  $project:{
+                    username:1,
+                    fullName:1,
+                    avatar:1
+                  }
+                }
+              ]
+            }
+          },
+          {
+            $addFields:{
+              owner:{
+                $first:"$owner"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ])
+
+  return res
+  .status(200)
+  .json(
+    new ApiResponse(200, user[0].watchHistory, 'watch history fetched')
+  )
+})
 
 export {
   registerUser,
